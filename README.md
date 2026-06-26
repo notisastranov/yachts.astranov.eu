@@ -1,6 +1,6 @@
-# astranov.eu-yachts
+# yachts.astranov.eu · SuperBooking
 
-Mobile-first AstranoV Yachting booking engine for the existing AstranoV Group central Supabase database.
+Mobile-first AstranoV Yachting on the **SuperBooking** engine — central AstranoV Supabase (`lkoatrkhuigdolnjsbie`).
 
 ## Stack
 
