@@ -12,14 +12,27 @@ Configure the page before the main script runs, for example in the deployed HTML
 
 ```html
 <script>
-window.ASTRANOV_YACHTING_CONFIG = {
+window.ASTRANOV_BOOKER_CONFIG = {
+  siteId: "yachts",
+  domain: "yachts.astranov.eu",
+  businessType: "yacht_charter",
+  mode: "range",
   youtubeVideoId: "vZWYrWF-0v8",
   supabaseUrl: "https://YOUR-CENTRAL-ASTRANOV-PROJECT.supabase.co",
   supabaseAnonKey: "YOUR_EXISTING_PUBLIC_ANON_KEY",
-  currency: "EUR"
+  currency: "EUR",
+  contact: {
+    phone: "+30...",
+    vhf: "AstranoV Yachting",
+    email: "charter@astranov.eu",
+    whatsapp: "30...",
+    address: "Mediterranean · AstranoV Group"
+  }
 };
 </script>
 ```
+
+`window.ASTRANOV_YACHTING_CONFIG` remains supported for backward compatibility.
 
 If these values are missing, production does not pretend to be connected and shows a clear configuration warning. `developmentDemo: true` may be used locally only for labeled demo data.
 
