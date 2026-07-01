@@ -1,5 +1,7 @@
-/* AstranoV Yacht AI Booking CLI — conversational match engine */
+/* AstranoV Yacht AI Booking CLI — Booker agent on Astranov Brain */
 window.YachtAiCli = (() => {
+  const AGENT = 'booker';
+  const BRAIN = 'astranov';
   const STAGES = ['greet', 'collect', 'match', 'refine', 'contact', 'confirm', 'sent'];
   const YACHT_TYPES = ['Motor Yacht', 'Sailing Yacht', 'Catamaran', 'Eco Yacht', 'Superyacht'];
   const MATCH_REQUIRED = ['start_date', 'end_date', 'guests'];
@@ -141,77 +143,140 @@ window.YachtAiCli = (() => {
     }
 
     greet() {
+      this.brainOnline = !!this.opts.brain;
       this.messages.push({
-        role: 'navigator',
-        text: 'AstranoV NAVIGATOR online. Forget form grids — tell me your voyage in plain language. I match yachts, crew, and budget in real time, then transmit to your booking officer.',
+        role: AGENT,
+        text: 'Booker here — charter agent on the Astranov Brain. No form grids: tell me your voyage and I match yachts, crew, and budget, then transmit to your booking officer.',
         kind: 'hero',
       });
       this.messages.push({
-        role: 'navigator',
-        text: 'Try: "Motor yacht Rhodes 15–22 July, 8 guests, budget 45k, need Greek-speaking crew."',
+        role: AGENT,
+        text: this.brainOnline
+          ? 'Astranov Brain connected. Try: "Motor yacht Rhodes 15–22 July, 8 guests, budget 45k, Greek-speaking crew."'
+          : 'Brain reconnecting — local matcher active. Describe dates, guests, budget.',
         kind: 'hint',
       });
       this.stage = 'collect';
     }
 
+    sayBooker(text, kind = 'default') {
+      this.messages.push({ role: AGENT, text, kind });
+    }
+
+    applyPatch(patch) {
+      if (!patch || typeof patch !== 'object') return;
+      Object.keys(patch).forEach((k) => {
+        const v = patch[k];
+        if (v != null && v !== '') this.demand[k] = v;
+      });
+    }
+
+    async callAstranovBrain(message) {
+      const bridge = this.opts.brain;
+      if (!bridge?.chat) return null;
+      this.thinking = true;
+      try {
+        return await bridge.chat({
+          config: this.opts.config,
+          message,
+          demand: this.demand,
+          stage: this.stage,
+          matchResult: this.matchResult,
+          suggestions: this.suggestions,
+          history: this.messages.filter((m) => m.role === 'user' || m.role === AGENT).slice(-10)
+            .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text })),
+        });
+      } catch (e) {
+        this.brainOnline = false;
+        return { text: '', action: 'reply', error: e.message };
+      } finally {
+        this.thinking = false;
+      }
+    }
+
+    async advance(brainAction) {
+      const action = (brainAction || '').toLowerCase();
+      if (action === 'transmit' || (this.demand._confirmIntent && this.stage === 'confirm')) {
+        await this.transmit();
+        return;
+      }
+      if (action === 'ack_crew') this.demand.crew_acknowledged = true;
+
+      const miss = missingFields(this.demand, 'match');
+      if (miss.length && this.stage !== 'contact' && this.stage !== 'confirm' && action !== 'match') {
+        this.stage = 'collect';
+        if (!this._brainSpoke) this.sayBooker(nextPrompt(miss, this.demand), 'ask');
+        return;
+      }
+
+      if (action === 'match' || (!miss.length && this.stage !== 'contact' && this.stage !== 'confirm' && this.stage !== 'refine')) {
+        await this.runMatch(false);
+      }
+
+      if (!this.demand.crew_acknowledged && action !== 'contact' && action !== 'transmit') {
+        this.stage = 'refine';
+        if (!this._brainSpoke) {
+          this.sayBooker('Yachts 13 m+ require minimum 3 crew — included in your quote. Acknowledge below or say "crew acknowledged".', 'policy');
+        }
+        return;
+      }
+
+      const cMiss = missingFields(this.demand, 'contact');
+      if (cMiss.length && action !== 'transmit') {
+        this.stage = 'contact';
+        if (!this._brainSpoke) this.sayBooker(nextPrompt(cMiss, this.demand), 'ask');
+        return;
+      }
+
+      this.stage = 'confirm';
+      if (!this._brainSpoke) {
+        const best = this.matchResult?.best;
+        this.sayBooker(
+          best
+            ? `Match locked: ${formatMatchBrief(best)}. Say "transmit to booking officer" when ready.`
+            : 'No perfect match yet — use suggestions or I can still forward your request.',
+          best ? 'match' : 'warn',
+        );
+      }
+    }
+
     async ingest(text) {
       const t = (text || '').trim();
-      if (!t) return;
+      if (!t || t === 'continue') {
+        if (t === 'continue') await this.advance('reply');
+        return;
+      }
       this.messages.push({ role: 'user', text: t });
       this.demand = parseDemand(t, this.demand);
       if (this.stage === 'greet') this.stage = 'collect';
+      this._brainSpoke = false;
 
       if (this.demand._confirmIntent && this.stage === 'confirm') {
         await this.transmit();
         return;
       }
 
-      const miss = missingFields(this.demand, 'match');
-      if (miss.length && this.stage !== 'contact' && this.stage !== 'confirm') {
-        this.stage = 'collect';
-        this.messages.push({ role: 'navigator', text: nextPrompt(miss, this.demand), kind: 'ask' });
-        return;
+      const brain = await this.callAstranovBrain(t);
+      if (brain?.text) {
+        this._brainSpoke = true;
+        this.brainOnline = true;
+        this.sayBooker(brain.text, brain.action === 'match' ? 'brain' : 'default');
+        this.applyPatch(brain.patch);
+        if (brain.patch?.crew_acknowledged) this.demand.crew_acknowledged = true;
+      } else if (brain?.error && !this.messages.some((m) => m.kind === 'warn' && /brain/i.test(m.text))) {
+        this.sayBooker('Astranov Brain momentarily offline — Booker local matcher engaged.', 'warn');
       }
 
-      if (this.stage !== 'contact' && this.stage !== 'confirm' && this.stage !== 'refine') {
-        await this.runMatch();
-      }
-
-      if (!this.demand.crew_acknowledged) {
-        this.stage = 'refine';
-        this.messages.push({
-          role: 'navigator',
-          text: 'Yachts 13 m+ require minimum 3 crew — your quote includes crew costs. Reply "crew acknowledged" or tap the chip below.',
-          kind: 'policy',
-        });
-        return;
-      }
-
-      const cMiss = missingFields(this.demand, 'contact');
-      if (cMiss.length) {
-        this.stage = 'contact';
-        this.messages.push({ role: 'navigator', text: nextPrompt(cMiss, this.demand), kind: 'ask' });
-        return;
-      }
-
-      this.stage = 'confirm';
-      const best = this.matchResult?.best;
-      this.messages.push({
-        role: 'navigator',
-        text: best
-          ? `Match locked: ${formatMatchBrief(best)}. Say "transmit to booking officer" to send.`
-          : 'No perfect match — adjust with suggestions below, or I can still forward your request to the officer.',
-        kind: best ? 'match' : 'warn',
-      });
+      await this.advance(brain?.action);
     }
 
-    async runMatch() {
+    async runMatch(announce = true) {
       this.stage = 'match';
-      this.messages.push({ role: 'navigator', text: 'Scanning fleet · crew pools · availability…', kind: 'scan' });
+      if (announce) this.sayBooker('Scanning fleet · crew pools · availability…', 'scan');
       const run = this.opts.runMatch;
       if (!run) {
         this.matchResult = null;
-        this.messages.push({ role: 'navigator', text: 'Matcher offline — configure Supabase to enable live matching.', kind: 'warn' });
+        if (announce) this.sayBooker('Matcher offline — configure Supabase to enable live matching.', 'warn');
         return;
       }
       try {
@@ -220,16 +285,12 @@ window.YachtAiCli = (() => {
         const best = this.matchResult?.best;
         if (best) {
           this.demand.yacht_id = best.supply?.id || best.supply?.metadata?.legacy_yachting_id || null;
-          this.messages.push({ role: 'navigator', text: `✦ ${formatMatchBrief(best)}`, kind: 'match' });
-        } else {
-          this.messages.push({
-            role: 'navigator',
-            text: 'No yacht matched all constraints. I can suggest changes — pick a chip or describe what to flex.',
-            kind: 'warn',
-          });
+          if (announce && !this._brainSpoke) this.sayBooker(`✦ ${formatMatchBrief(best)}`, 'match');
+        } else if (announce && !this._brainSpoke) {
+          this.sayBooker('No yacht matched all constraints — pick a suggestion chip or tell me what to flex.', 'warn');
         }
       } catch (e) {
-        this.messages.push({ role: 'navigator', text: `Match error: ${e.message}`, kind: 'warn' });
+        if (announce) this.sayBooker(`Match error: ${e.message}`, 'warn');
       }
     }
 
@@ -241,33 +302,30 @@ window.YachtAiCli = (() => {
       await this.runMatch();
     }
 
-    acknowledgeCrew() {
+    async acknowledgeCrew() {
       this.demand.crew_acknowledged = true;
       this.messages.push({ role: 'user', text: 'Crew policy acknowledged.' });
-      this.ingest('continue');
+      this._brainSpoke = false;
+      await this.advance('ack_crew');
     }
 
     async transmit() {
       if (this.transmitting) return;
       this.transmitting = true;
       this.stage = 'sent';
-      this.messages.push({ role: 'navigator', text: '◈ Transmitting charter package to Booking Officer…', kind: 'transmit' });
+      this.sayBooker('◈ Booker transmitting charter package to Booking Officer via Astranov Brain…', 'transmit');
       try {
         const payload = {
           ...this.demand,
           yacht_id: this.demand.yacht_id || this.matchResult?.best?.supply?.id || null,
-          message: this.demand.message || `AI charter request: ${formatMatchBrief(this.matchResult?.best)}`,
+          message: this.demand.message || `Booker · Astranov Brain charter: ${formatMatchBrief(this.matchResult?.best)}`,
           crew_ack: this.demand.crew_acknowledged,
           desired_characteristics: this.demand.traits || '',
         };
         await this.opts.submitBooking(payload);
-        this.messages.push({
-          role: 'navigator',
-          text: '✓ Request transmitted. Your booking officer will respond with offers. Track status in the Customer tab.',
-          kind: 'success',
-        });
+        this.sayBooker('✓ Transmitted. Your booking officer will respond with offers — track status in the Customer tab.', 'success');
       } catch (e) {
-        this.messages.push({ role: 'navigator', text: `Transmission failed: ${e.message}`, kind: 'warn' });
+        this.sayBooker(`Transmission failed: ${e.message}`, 'warn');
         this.stage = 'confirm';
       } finally {
         this.transmitting = false;
@@ -295,15 +353,16 @@ window.YachtAiCli = (() => {
     root.innerHTML = `
       <div class="ai-cli-wrap">
         <div class="ai-cli-hero">
-          <div class="ai-cli-badge">WORLD FIRST</div>
-          <h2 class="ai-cli-title">AstranoV AI Booking Engine</h2>
-          <p class="ai-cli-sub">No forms. Speak your voyage. We match · suggest · transmit.</p>
+          <div class="ai-cli-badge">ASTRANOV BRAIN</div>
+          <h2 class="ai-cli-title">Agent Booker</h2>
+          <p class="ai-cli-sub">The first AI booking engine · no forms · match · suggest · transmit</p>
+          <p class="ai-cli-brain-status ${brain.brainOnline !== false ? 'online' : 'offline'}">${brain.thinking ? 'Booker thinking…' : (brain.brainOnline !== false ? 'Booker · Astranov Brain online' : 'Booker · local matcher')}</p>
         </div>
         <div class="ai-cli-radar">
           ${fields.map(([k, v]) => `<div class="ai-field-chip ${v !== '—' ? 'filled' : ''}"><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join('')}
         </div>
         <div class="ai-cli-log" id="aiCliLog">
-          ${msgs.map((m) => `<div class="ai-msg ai-msg-${m.role} ai-kind-${m.kind || 'default'}"><span class="ai-msg-label">${m.role === 'user' ? 'YOU' : 'NAVIGATOR'}</span><p>${esc(m.text)}</p></div>`).join('')}
+          ${msgs.map((m) => `<div class="ai-msg ai-msg-${m.role} ai-kind-${m.kind || 'default'}"><span class="ai-msg-label">${m.role === 'user' ? 'YOU' : 'BOOKER'}</span><p>${esc(m.text)}</p></div>`).join('')}
         </div>
         ${suggestions.length ? `<div class="ai-suggestions">${suggestions.map((s) => `<button type="button" class="ai-sug" data-sug="${esc(s.id)}">${esc(s.label)}</button>`).join('')}</div>` : ''}
         <div class="ai-cli-actions">
@@ -327,8 +386,7 @@ window.YachtAiCli = (() => {
       renderUI(root, brain);
     });
     root.querySelector('#aiAckCrew')?.addEventListener('click', async () => {
-      brain.acknowledgeCrew();
-      await brain.ingest('continue');
+      await brain.acknowledgeCrew();
       renderUI(root, brain);
     });
     root.querySelector('#aiTransmit')?.addEventListener('click', async () => {
