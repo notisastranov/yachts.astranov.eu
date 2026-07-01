@@ -1,5 +1,31 @@
 /* Astranov Match Engine — universal supply/demand matching for all business types */
 window.AstranovMatchEngine = {
+  CREW_LENGTH_THRESHOLD_M: 13,
+  CREW_MIN_AT_THRESHOLD: 3,
+
+  crewFloor(lengthM) {
+    const len = Number(lengthM);
+    return Number.isFinite(len) && len >= this.CREW_LENGTH_THRESHOLD_M ? this.CREW_MIN_AT_THRESHOLD : 1;
+  },
+
+  effectiveMinimumCrew(item) {
+    const m = item?.metadata || {};
+    const lengthM = Number(item?.length_m ?? m.length_m);
+    const declared = Number(item?.minimum_crew ?? m.minimum_crew);
+    const floor = this.crewFloor(lengthM);
+    if (Number.isFinite(declared) && declared > 0) return Math.max(floor, Math.floor(declared));
+    return floor;
+  },
+
+  buildRequiredCrew(count) {
+    const n = Math.max(1, Math.floor(Number(count) || 1));
+    const req = { captain: 1 };
+    if (n >= 2) req.vice_captain = 1;
+    const cadetNeed = Math.max(0, n - 2);
+    if (cadetNeed > 0) req.cadet = cadetNeed;
+    return req;
+  },
+
   resolveConfig(siteConfig) {
     const type = siteConfig?.businessType || siteConfig?.business_type || 'generic';
     const preset = window.AstranovMatchPresets?.[type] || window.AstranovMatchPresets?.generic || {};
@@ -94,7 +120,7 @@ window.AstranovMatchEngine = {
     const passengers = d.passengers;
     const maxDurField = cfg.max_duration_field;
     const resCfg = cfg.resources || {};
-    const required = resCfg.required || {};
+    const presetRequired = resCfg.required || {};
     const defaultRates = resCfg.default_rates || {};
     const matches = [];
 
@@ -127,6 +153,9 @@ window.AstranovMatchEngine = {
       const roster = [];
       let resourcesOk = true;
       if (resCfg.enabled) {
+        const required = cfg.businessType === 'yacht_charter'
+          ? this.buildRequiredCrew(this.effectiveMinimumCrew(item))
+          : presetRequired;
         Object.keys(required).forEach((role) => {
           const need = required[role] || 0;
           const picked = this.pickResources(resources, role, need, start, end, item.id, defaultRates);
@@ -142,12 +171,14 @@ window.AstranovMatchEngine = {
       );
       const total = supplyTotal + resourceTotal;
 
+      const minimumCrew = cfg.businessType === 'yacht_charter' ? this.effectiveMinimumCrew(item) : null;
       matches.push({
         supply: item,
         days,
         passengers,
+        minimum_crew: minimumCrew,
         resources: roster,
-        breakdown: { supply_total: supplyTotal, resource_total: resourceTotal, days },
+        breakdown: { supply_total: supplyTotal, resource_total: resourceTotal, days, minimum_crew: minimumCrew },
         total,
         score: total,
       });
@@ -172,7 +203,14 @@ window.AstranovMatchEngine = {
       price_week: y.price_week,
       yacht_type: y.yacht_type,
       cabins: y.cabins,
-      metadata: { legacy: 'yachting_yachts', characteristics: y.characteristics },
+      length_m: y.length_m,
+      minimum_crew: y.minimum_crew,
+      metadata: {
+        legacy: 'yachting_yachts',
+        characteristics: y.characteristics,
+        length_m: y.length_m,
+        minimum_crew: y.minimum_crew,
+      },
       availability: availability || y.availability || [],
     };
   },

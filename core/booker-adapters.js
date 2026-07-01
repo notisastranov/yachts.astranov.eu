@@ -59,6 +59,8 @@ window.AstranovSitesAdapters = {
           currency: config.currency || 'EUR',
           desired_characteristics: chars(data.traits || data.desired_characteristics),
           message: data.message,
+          crew_notes: data.crew_notes || null,
+          crew_acknowledged: !!(data.crew_ack || data.crew_acknowledged),
           status: 'waiting_for_answer'
         };
         const { error } = await supa.from(tables.bookings).insert(payload);

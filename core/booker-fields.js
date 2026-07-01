@@ -10,6 +10,8 @@ window.AstranovSitesFields = {
       { id: 'budget', stage: 'product', type: 'number', label: 'Budget (EUR)', min: 0, modes: ['range'] },
       { id: 'yacht_type', stage: 'product', type: 'select', label: 'Yacht type', options: ['Any', 'Motor Yacht', 'Sailing Yacht', 'Catamaran', 'Eco Yacht', 'Superyacht'], modes: ['range'] },
       { id: 'traits', stage: 'product', type: 'text', label: 'Characteristics', placeholder: 'eco, jacuzzi, crew', modes: ['range'] },
+      { id: 'crew_notes', stage: 'details', type: 'textarea', label: 'Crew preferences', placeholder: 'Language, chef, hostess, special certifications...', modes: ['range'] },
+      { id: 'crew_ack', stage: 'confirm', type: 'checkbox', label: 'I understand mandatory crew is included in the charter quote', required: true, modes: ['range'] },
       { id: 'message', stage: 'details', type: 'textarea', label: 'Request details', required: true, placeholder: 'Departure area, style, crew, water toys...', modes: ['range'] }
     ],
     diving_school: [
